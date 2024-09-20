@@ -1,0 +1,126 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Aug  7 09:24:53 2024
+
+@author: TianyiSu
+"""
+import extraction_analysis_functions as fc
+
+def main():
+    global df
+    file_path = input("Enter the file path of the excel file that you would like to perform data analysis on (ends with .xlsx): ")
+    df = fc.load_data(file_path)
+    column_names = fc.get_column_names(df)
+    selected_columns = fc.prompt_user_for_columns(column_names)
+    filters = fc.prompt_user_for_filters(df, column_names)
+
+    # Generate and apply a filter or a complex logical expression
+    expression = fc.generate_filter_expression(filters, column_names)
+    filtered_df = fc.filter_data_with_expression(df, expression)
+
+    filtered_df = fc.extract_columns(filtered_df, selected_columns)
+    output_file_path = input("Enter the address of where you would like to save: ")
+    fc.export_to_excel(filtered_df, output_file_path)
+
+    # Perform descriptive statistics
+    while True:
+        stats_choice = input("Do you want to perform descriptive statistics? (yes/no): ").strip().lower()
+        if stats_choice in {'yes', 'no'}:
+            break
+    if stats_choice == 'yes':
+        selected_columns_stats = fc.prompt_user_for_columns(selected_columns)
+        stats_df = fc.perform_descriptive_statistics(filtered_df, selected_columns_stats)
+        stats_output_file_path = input("Enter the output file path here: ")
+        stats_df.to_excel(stats_output_file_path, index=True)
+        print(f"Descriptive statistics successfully exported to {stats_output_file_path}")
+
+    # Prompt for t-test
+    while True:
+        ttest_choice = input("Do you want to perform a t-test? (yes/no): ").strip().lower()
+        if ttest_choice in {'yes', 'no'}:
+            break
+    if ttest_choice == 'yes':
+        while True:
+            try:
+                # Only allow selection from previously selected columns
+                print("Available columns for t-test:")
+                for i, col in enumerate(selected_columns, 1):
+                    print(f"{i}. {fc.format_column_name(col)}")
+
+                group_col_num = int(input("Enter the number of the categorical column to compare: "))
+                value_col_num = int(input("Enter the number of the numerical column to compare: "))
+
+                group_col = selected_columns[group_col_num - 1]
+                value_col = selected_columns[value_col_num - 1]
+
+                break
+            except (ValueError, IndexError):
+                print("Invalid input. Please enter valid column numbers.")
+
+        category1 = input(f"Enter the first category to compare in '{fc.format_column_name(group_col)}': ").strip().lower()
+        category2 = input(f"Enter the second category to compare in '{fc.format_column_name(group_col)}': ").strip().lower()
+
+        while True:
+            test_type = input("Enter the type of t-test (independent/paired): ").strip().lower()
+            if test_type in {'independent', 'paired'}:
+                break
+            else:
+                print("Invalid test type. Please enter 'independent' or 'paired'.")
+
+        # exporting
+        ttest_fin = fc.perform_t_test(filtered_df, group_col, value_col, category1, category2, test_type)
+        stats_output_file_path = input("Enter the output file path here: ")
+        ttest_fin.to_excel(stats_output_file_path, index = True)
+        print(f"T-test successfully exported to {stats_output_file_path}")
+
+
+    # chi-square test
+    chi_test_choice = input("Do you want to perform a chi-square test? (yes/no): ").strip().lower()
+    if chi_test_choice == 'yes':
+        print("Available columns for chi-square:")
+        for i, col in enumerate(selected_columns, 1):
+            print(f"{i}.{fc.format_column_name(col)}")
+
+        col1 = int(input("Enter the number of the first column to compare: "))
+        col2 = int(input("Enter the number of the second column to comapre: "))
+
+        actual_col_1 = selected_columns[col1 - 1]
+        actual_col_2 = selected_columns[col2 - 1]
+
+
+        # exporting
+        chi_test_fin = fc.perform_chi_square_test(filtered_df, actual_col_1, actual_col_2)
+        stats_output_file_path = input("Enter the output file path here: ")
+        chi_test_fin.to_excel(stats_output_file_path, index = True)
+        print(f"Chi-square test successfully exported to {stats_output_file_path}")
+
+    elif chi_test_choice == 'no':
+        pass
+    else:
+        print("Invalid input. Please try again.")
+
+
+    # simple linear regression
+    s_lr_choice = input("Do you want to perform a linear regression model? (yes/no): ").strip().lower()
+    if s_lr_choice == 'yes':
+        print("Available columns for simple linear regression: ")
+        for i, col in enumerate(selected_columns, 1):
+            print(f"{i}.{fc.format_column_name(col)}")
+
+        y = input("Enter the NAME of your response variable/y variable: ").lower().replace(" ", "_")
+        x = input("Enter the NAME of the independent variable/x variable: ").lower().replace(" ", "_")
+
+        reg_type = input("Do you want to perform a simple linear regression or logistic regression? (linear/logistic): ").strip().lower()
+
+        fc.linear_regression(filtered_df, x, y, reg_type)
+    elif s_lr_choice == 'no':
+        print("")
+    else:
+        print("Invalid input. Please try again.")
+
+
+
+
+
+if __name__ == "__main__":
+    main()
