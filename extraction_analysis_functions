@@ -1,0 +1,352 @@
+# -*- coding: utf-8 -*-
+
+"""
+Created on Wed Aug  7 09:23:35 2024
+
+@author: Lab Member Collaboration Work
+"""
+
+import pandas as pd
+from scipy.stats import ttest_ind, ttest_rel
+from scipy.stats import chi2_contingency
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn import linear_model
+from sklearn import preprocessing
+from sklearn.metrics import mean_squared_error, r2_score
+
+def load_data(file_path):
+    # Load the Excel file
+    sheet_name = input("Enter the EXACT sheet name in your excel for data analysis: ")
+    return pd.read_excel(file_path, sheet_name)
+
+def format_column_name(name):
+    # Convert snake_case to Proper Case
+    return ' '.join(word.capitalize() for word in name.split('_'))
+
+def get_column_names(df):
+    # Get all column names
+    return df.columns.tolist()
+
+def prompt_user_for_columns(column_names):
+    # Display available columns with formatted names
+    print("Available columns:")
+    for i, col in enumerate(column_names, 1):
+        print(f"{i}. {format_column_name(col)}")
+
+    # Prompt user for column selection
+    while True:
+        try:
+            selected_columns = input("Enter the numbers of the columns you want to extract, separated by commas: ")
+            selected_columns = [int(num) for num in selected_columns.split(',')]
+            selected_columns = [column_names[i-1] for i in selected_columns]
+            break
+        except (ValueError, IndexError):
+            print("Invalid input. Please enter valid column numbers separated by commas.")
+
+    return selected_columns
+
+def is_date_column(df, col, date_format):
+    try:
+        pd.to_datetime(df[col], format=date_format)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+def prompt_user_for_filters(df, column_names):
+    # Prompt user for filtering criteria
+    filters = {}
+    print("Define filtering criteria for the selected columns.")
+    while True:
+        column_filter = input("Enter the name or number of the column you want to filter by (or 'done' to finish): ")
+        if column_filter.lower() == 'done':
+            break
+        try:
+            # Determine if the input is a number or column name
+            if column_filter.isdigit():
+                column_filter = int(column_filter)
+                if column_filter < 1 or column_filter > len(column_names):
+                    raise ValueError
+                column_filter = column_names[column_filter-1]
+            elif column_filter not in column_names:
+                raise ValueError
+        except ValueError:
+            print(f"Invalid input. Please enter a valid column name or a number between 1 and {len(column_names)}.")
+            continue
+
+        if is_date_column(df, column_filter, '%Y-%m-%d'):
+            start_date = input(f"Enter the start date for '{format_column_name(column_filter)}' (YYYY-MM-DD): ")
+            end_date = input(f"Enter the end date for '{format_column_name(column_filter)}' (YYYY-MM-DD): ")
+            filters[column_filter] = (start_date, end_date, 'date_range')
+        else:
+            print("Filter modes:")
+            print("1. Any of the values")
+            print("2. All of the values")
+            print("3. Exact match")
+            print("4. Contains any")
+            print("5. Greater than")
+            print("6. Less than")
+            print("7. Greater than or equal to")
+            print("8. Less than or equal to")
+            print("9. Not equal to")
+            print("10. Starts with")
+
+            while True:
+                filter_mode = input("Choose the filter mode (1, 2, 3, 4, 5, 6, 7, 8, 9, 10): ").strip()
+                if filter_mode in {'1', '2', '3', '4', '5', '6', '7', '8', '9', '10'}:
+                    break
+                else:
+                    print("Invalid filter mode. Please choose 1, 2, 3, 4, 5, 6, 7, 8, 9, or 10.")
+
+            if filter_mode in {'5', '6', '7', '8', '9', '10'}:
+                filter_value = input(f"Enter the filter value for '{format_column_name(column_filter)}': ")
+                filters[column_filter] = (filter_value, filter_mode)
+            else:
+                filter_values = input(f"Enter the filter values for '{format_column_name(column_filter)}' separated by commas: ")
+                filters[column_filter] = (filter_values, filter_mode)
+
+    return filters
+
+def generate_filter_expression(filters, column_names):
+    # If there's only one filter, no need for a complex logical expression
+    if len(filters) == 1:
+        key = list(filters.keys())[0]
+        condition = build_condition_string(key, filters[key])
+        return condition
+
+    # Otherwise, build the complex logical expression
+    print("Available filters:")
+    filter_keys = list(filters.keys())
+    for i, key in enumerate(filter_keys, 1):
+        print(f"{i}. {format_column_name(key)}")
+
+    print("\nNow, create a complex logical expression using the filters above.")
+    print("You can use either column names or the numbers listed above.")
+    print("Example: 1 or (2 and 'column_name')")
+
+    expression = input("Enter your complex logical expression: ")
+
+    # Replace the numeric references with actual column filters
+    for i, key in enumerate(filter_keys, 1):
+        condition = build_condition_string(key, filters[key])
+        expression = expression.replace(str(i), f"({condition})").replace(f"'{format_column_name(key)}'", f"({condition})")
+
+    # Replace logical operators with pandas-compatible bitwise operators
+    expression = expression.replace(' and ', ' & ').replace(' or ', ' | ').replace(' not ', ' ~')
+
+    return expression
+
+def build_condition_string(col, filter_info):
+    if filter_info[-1] == 'date_range':
+        start_date, end_date, _ = filter_info
+        return f"(pd.to_datetime(df['{col}']) >= '{start_date}') & (pd.to_datetime(df['{col}']) <= '{end_date}')"
+    else:
+        values, mode = filter_info
+        if mode in {'1', '2', '3', '4'}:
+            values = [value.strip().lower() for value in values.split(',')]
+        if mode == '5':
+            return f"(df['{col}'].astype(float) > {float(values[0])})"
+        elif mode == '6':
+            return f"(df['{col}'].astype(float) < {float(values[0])})"
+        elif mode == '7':
+            return f"(df['{col}'].astype(float) >= {float(values[0])})"
+        elif mode == '8':
+            return f"(df['{col}'].astype(float) <= {float(values[0])})"
+        elif mode == '9':
+            return f"(df['{col}'].astype(str).str.lower() != '{values[0]}')"
+        elif mode == '10':
+            return f"(df['{col}'].astype(str).str.lower().str.startswith('{values[0]}'))"
+        elif mode == '1':
+            return f"(df['{col}'].astype(str).str.lower().isin({values}))"
+        elif mode == '2':
+            return f"(df['{col}'].astype(str).str.lower().apply(lambda cell: all(value in cell for value in {values})))"
+        elif mode == '3':
+            return f"(df['{col}'].astype(str).str.lower() == '{values[0]}')"
+        elif mode == '4':
+            return f"(df['{col}'].astype(str).str.lower().apply(lambda cell: any(value in cell for value in {values})))"
+        else:
+            raise ValueError("Invalid filter mode.")
+
+def filter_data_with_expression(df, expression):
+    # Evaluate the logical expression as a mask for the DataFrame
+    try:
+        mask = eval(expression)
+    except Exception as e:
+        print(f"Error in evaluating the expression: {e}")
+        return df  # Return unfiltered df in case of error
+
+    filtered_df = df[mask]
+    if filtered_df.empty:
+        print("Warning: The filtered DataFrame is empty. No data to export.")
+    return filtered_df
+
+def extract_columns(df, selected_columns):
+    # Extract selected columns
+    return df[selected_columns]
+
+def export_to_excel(filtered_df, output_file_path):
+    # Export the filtered data to an Excel file
+    if not filtered_df.empty:
+        filtered_df.to_excel(output_file_path, index=False)
+        print(f"Data successfully exported to {output_file_path}")
+    else:
+        print("No data to export.")
+
+
+"""
+Created on Wed Aug  7 09:23:35 2024
+
+@author: Tina
+"""
+
+def perform_descriptive_statistics(df, selected_columns):
+    print("Descriptive Statistics:")
+    stats_list = []
+    data = []
+
+    for col in selected_columns:
+        if df[col].dtype == 'object' or df[col].dtype == 'category':
+            freq = df[col].value_counts()
+            stats = freq.to_frame(name='Frequency')
+        else:
+            stats = df[col].describe().to_frame(name=col)
+            stats.loc['range'] = stats.loc['max'] - stats.loc['min']
+            data.append(df[col])
+
+            if abs(np.median(data) - np.mean(data)) < 1:
+                print("Data is roughly symmetric, use mean = ",  np.mean(data))
+            elif np.median(data) - np.mean(data) > 1:
+                print("Data is negatively skewed (left-skewed), use median = ",
+                      np.median(data))
+            else:
+                print("Data is positively skewed (right-skewed), use median = ",
+                      np.median(data))
+        print(f"Statistics for {col}:")
+        print(stats)
+        stats_list.append(stats)
+
+    return pd.concat(stats_list, axis=1)
+
+def perform_t_test(df, group_col, value_col, category1, category2, test_type='independent'):
+    group1 = df[df[group_col].str.lower() == category1.lower()][value_col].dropna()
+    group2 = df[df[group_col].str.lower() == category2.lower()][value_col].dropna()
+    if test_type == 'independent':
+        t_stat, p_value = ttest_ind(group1, group2)
+    elif test_type == 'paired':
+        t_stat, p_value = ttest_rel(group1, group2)
+    else:
+        raise ValueError("Invalid test type. Use 'independent' or 'paired'.")
+    print(f"T-test results: t-statistic = {t_stat}, p-value = {p_value}")
+
+    # code below are for exporting
+    results_df = pd.DataFrame({
+        'Statistic': ['t-statistic', 'p-value'],
+        'Value': [t_stat, p_value]
+    })
+    return results_df
+
+def perform_chi_square_test(df, selected_col1, selected_col2):
+
+    data = pd.crosstab(index = df[selected_col1].dropna(),
+                       columns = df[selected_col2].dropna())
+
+    chi2_stat, p_val, dof, expected = chi2_contingency(data)
+
+    results_df = pd.DataFrame({
+        'Chi-square statistic': [chi2_stat],
+        'p-value': [p_val],
+        'Degrees of Freedom':[dof],
+        'Expected frequencies': [expected]
+    })
+
+    print(results_df)
+
+    if p_val < 0.05:
+        print("The p-value is less than alpha = 0.05. Therefore, we are able to reject the null hypothesis" +
+              " and conclude that there is some kind of relationship between the two variables we tested.")
+    else:
+        print("The p-value is greater than alpha = 0.05. Therefore, we are unable to reject the null hypothesis" +
+              " and conclude that the two variables are independent of each other.")
+
+    return results_df
+
+
+def linear_regression(df, x, y, reg_type):
+
+    if reg_type == 'linear':
+        # prep the data
+        X = df[[x]].dropna()
+        Y = df[[y]].dropna()
+
+        # split data into training and testing sets
+        X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size = 0.2, random_state = 0)
+
+        # create and train model
+        model = LinearRegression()
+        model.fit(X_train, Y_train)
+
+        # predictions
+        y_pred = model.predict(X_test)
+
+        # goodness of fit
+        mse = mean_squared_error(Y_test, y_pred)
+        r2 = r2_score(Y_test, y_pred)
+
+        print(f'Mean Squared Error: {mse}')
+        print(f'R^2 Score: {r2}')
+        if abs(r2) >= 0.7:
+            print("A roughly linear relationship between the two selected variables is observed")
+        else:
+            print("The relationship between the two selected variables is not quite linear")
+
+        # Print the linear equation
+        intercept = model.intercept_
+        coefficient = model.coef_[0]
+
+        print(f'The linear equation is: y = {intercept} + {coefficient} * X')
+
+    elif reg_type == 'logistic':
+        print("Here are the unique levels of your response variables: ", df[y].unique())
+        label_encoder = preprocessing.LabelEncoder()
+        Y = label_encoder.fit_transform(df[y])
+        print("Here is the encoded values for your response variables: ", np.unique(Y))
+
+        X = df[[x]].dropna()
+        # Y = Y.dropna()
+
+        logr = linear_model.LogisticRegression()
+        logr.fit(X, Y)
+
+        # odds
+        log_odds = logr.coef_
+        odds = np.exp(log_odds)
+        print("Interpretation: as the independent variable increase by 1 unit, the odds of the response variable ", df[y].unique()[1], f' will change by {odds} times')
+
+        # probability
+        log_odds1 = logr.coef_ * X + logr.intercept_
+        odds1 = np.exp(log_odds1)
+        probability = odds1 / (1 + odds1)
+        stats_output_file_path = 'C:/Users/TianyiSu/Desktop/lab_code/logistic_prob.xlsx'
+        probability.to_excel(stats_output_file_path, index = True)
+        print("The probability of all x values being ", df[y].unique()[1], f' is successifully outputed to {stats_output_file_path}.')
+
+        # prediction
+        choice = input("Would you like to perform a prediction? (yes/no): ").strip().lower()
+        if choice == "yes":
+            pred = float(input("Enter the value you want to predict: "))
+            predicted = logr.predict(np.array([pred]).reshape(-1, 1))
+            print(f'The predicted result of your input is: {predicted}')
+        elif choice == "no":
+            print()
+        else:
+            print("Invalid input.")
+
+    else:
+        print("Invalid output.")
+    return
+
+
+
+
+
